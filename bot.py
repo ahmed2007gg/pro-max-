@@ -156,6 +156,45 @@ def status_icon(key: str) -> str:
     return "🟢 شغال" if state[key] else "🔴 متوقف"
 
 
+@dp.message(Command("check"))
+async def cmd_check(message: types.Message):
+    """أمر تشخيصي — يفحص الآن ويرسل النتيجة مباشرة."""
+    await message.answer("🔍 جاري الفحص، انتظر...")
+
+    for key in CALENDAR_IDS:
+        try:
+            cal_id = CALENDAR_IDS[key]
+            month  = get_months(1)[0]
+
+            async with aiohttp.ClientSession(
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"}
+            ) as session:
+                html = await fetch_calendar(session, cal_id, month)
+
+            if html is None:
+                await message.answer(f"❌ <b>{NAMES[key]}</b>: فشل جلب الصفحة (الموقع بلوك أو داون)", parse_mode="HTML")
+                continue
+
+            dates = parse_dates(html)
+
+            if dates:
+                lines = "\n".join(f"  • {d} — {s} مكان" for d, s in sorted(dates.items()))
+                await message.answer(
+                    f"✅ <b>{NAMES[key]}</b>:\n{lines}",
+                    parse_mode="HTML"
+                )
+            else:
+                # أرسل أول 500 حرف من الـ HTML للتشخيص
+                preview = html[:500].replace("<", "&lt;").replace(">", "&gt;")
+                await message.answer(
+                    f"📭 <b>{NAMES[key]}</b>: لا مواعيد — أول الـ HTML:\n<pre>{preview}</pre>",
+                    parse_mode="HTML"
+                )
+
+        except Exception as e:
+            await message.answer(f"💥 <b>{NAMES[key]}</b>: {e}", parse_mode="HTML")
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     text = (
@@ -290,6 +329,7 @@ async def _send_alert(key: str, dates: dict[str, int]):
 async def set_commands():
     await bot.set_my_commands([
         BotCommand(command="start",        description="حالة البوت"),
+        BotCommand(command="check",        description="فحص فوري + تشخيص"),
         BotCommand(command="algiers_on",   description="تشغيل الجزائر العاصمة"),
         BotCommand(command="algiers_off",  description="إيقاف الجزائر العاصمة"),
         BotCommand(command="oran_on",      description="تشغيل وهران"),
