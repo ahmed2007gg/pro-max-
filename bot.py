@@ -13,7 +13,7 @@ import aiohttp
 #  ⚙️  إعدادات
 # ─────────────────────────────────────────
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8688561478:AAGRQ2a2qujKiRVHlfWck_bBvEw3NxDHhe0")
-CHAT_ID   = os.getenv("CHAT_ID",   "8008077791")
+CHAT_ID   = os.getenv("CHAT_ID",   "-1003767484597")
 
 CHECK_INTERVAL = 60   # ثانية
 
