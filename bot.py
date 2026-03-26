@@ -57,7 +57,7 @@ dp  = Dispatcher()
 
 
 # ══════════════════════════════════════════
-#  🛠️  دوال المراقبة (جاهزة للربط لاحقاً)
+#  🛠️  دوال المراقبة
 # ══════════════════════════════════════════
 
 async def fetch_calendar(session: aiohttp.ClientSession, cal_id: int, month: str) -> str | None:
@@ -225,8 +225,6 @@ async def cmd_oran_vip_off(message: types.Message):
 #  🔁  Loop المراقبة
 # ══════════════════════════════════════════
 
-_notified: dict[str, set] = {k: set() for k in state}   # تجنب التكرار
-
 CHECKERS = {
     "algiers":  check_algiers,
     "oran":     check_oran,
@@ -251,19 +249,10 @@ async def monitor_loop():
                 dates = await CHECKERS[key]()
 
                 if dates:
-                    # مواعيد جديدة لم يُشعَر بها من قبل
-                    new_dates = {d: s for d, s in dates.items() if d not in _notified[key]}
-
-                    if new_dates:
-                        log.info(f"🚨 {NAMES[key]}: {len(new_dates)} موعد جديد")
-                        _notified[key].update(new_dates.keys())
-                        await _send_alert(key, new_dates)
-                    else:
-                        log.info(f"ℹ️  {NAMES[key]}: مواعيد موجودة سبق الإشعار عنها")
+                    log.info(f"🚨 {NAMES[key]}: {len(dates)} موعد متاح — جاري الإرسال")
+                    await _send_alert(key, dates)
                 else:
                     log.info(f"📭 {NAMES[key]}: لا توجد مواعيد")
-                    # إعادة تعيين الإشعارات عند اختفاء المواعيد
-                    _notified[key].clear()
 
             except Exception as e:
                 log.error(f"خطأ في فحص {key}: {e}")
@@ -272,11 +261,11 @@ async def monitor_loop():
 
 
 async def _send_alert(key: str, dates: dict[str, int]):
-    """إرسال إشعار تلغرام عند وجود مواعيد جديدة."""
+    """إرسال إشعار تلغرام عند وجود مواعيد."""
     cal_id = CALENDAR_IDS[key]
     lines  = "\n".join(f"  • {d} — <b>{s} مكان</b>" for d, s in sorted(dates.items()))
     text   = (
-        f"🚨🚨🚨 <b>مواعيد جديدة متاحة!</b>\n\n"
+        f"🚨🚨🚨 <b>مواعيد متاحة!</b>\n\n"
         f"📍 <b>{NAMES[key]}</b>\n\n"
         f"📅 <b>التواريخ:</b>\n{lines}\n\n"
         f"⏰ {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n"
@@ -313,7 +302,6 @@ async def set_commands():
 async def main():
     log.info("🚀 Mosaic Bot يبدأ...")
     await set_commands()
-    # تشغيل الـ loop بالتوازي مع البوت
     asyncio.create_task(monitor_loop())
     await dp.start_polling(bot, skip_updates=True)
 
