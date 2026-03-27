@@ -3,8 +3,9 @@ import logging
 import json
 import os
 from datetime import datetime
+from typing import Callable, Awaitable, Any
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, BaseMiddleware
 from aiogram.filters import Command
 from aiogram.types import BotCommand
 import aiohttp
@@ -21,7 +22,7 @@ CHECK_INTERVAL = 60   # ثانية
 CALENDAR_IDS = {
     "algiers":  9,
     "oran":     7,
-    "oran_vip": 8,   # ← غيّر الـ ID إذا عندك المعرّف الصحيح
+    "oran_vip": 8,
 }
 
 # ─────────────────────────────────────────
@@ -54,6 +55,23 @@ log = logging.getLogger(__name__)
 # ─────────────────────────────────────────
 bot = Bot(token=BOT_TOKEN)
 dp  = Dispatcher()
+
+# ══════════════════════════════════════════
+#  🔒  Middleware — يقبل القروب فقط
+# ══════════════════════════════════════════
+class GroupOnlyMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[types.Message, dict], Awaitable[Any]],
+        event: types.Message,
+        data: dict
+    ) -> Any:
+        if str(event.chat.id) != str(CHAT_ID):
+            log.info(f"🚫 رسالة مرفوضة من chat_id: {event.chat.id}")
+            return  # تجاهل تام
+        return await handler(event, data)
+
+dp.message.middleware(GroupOnlyMiddleware())
 
 
 # ══════════════════════════════════════════
@@ -117,22 +135,18 @@ def get_months(ahead: int = 2) -> list[str]:
 
 
 async def check_algiers() -> dict[str, int]:
-    """فحص مواعيد مركز الجزائر العاصمة."""
     return await _check_center("algiers")
 
 
 async def check_oran() -> dict[str, int]:
-    """فحص مواعيد مركز وهران."""
     return await _check_center("oran")
 
 
 async def check_oran_vip() -> dict[str, int]:
-    """فحص مواعيد مركز وهران VIP."""
     return await _check_center("oran_vip")
 
 
 async def _check_center(key: str) -> dict[str, int]:
-    """دالة مشتركة تجلب التواريخ لأي مركز."""
     cal_id = CALENDAR_IDS[key]
     all_dates: dict[str, int] = {}
 
@@ -158,7 +172,6 @@ def status_icon(key: str) -> str:
 
 @dp.message(Command("check"))
 async def cmd_check(message: types.Message):
-    """أمر تشخيصي — يفحص الآن ويرسل النتيجة مباشرة."""
     await message.answer("🔍 جاري الفحص، انتظر...")
 
     for key in CALENDAR_IDS:
@@ -184,7 +197,6 @@ async def cmd_check(message: types.Message):
                     parse_mode="HTML"
                 )
             else:
-                # أرسل أول 500 حرف من الـ HTML للتشخيص
                 preview = html[:500].replace("<", "&lt;").replace(">", "&gt;")
                 await message.answer(
                     f"📭 <b>{NAMES[key]}</b>: لا مواعيد — أول الـ HTML:\n<pre>{preview}</pre>",
@@ -272,8 +284,7 @@ CHECKERS = {
 
 
 async def monitor_loop():
-    """يعمل كل CHECK_INTERVAL ثانية ويفحص المراكز الـ ON فقط."""
-    await asyncio.sleep(5)   # انتظر حتى يبدأ البوت
+    await asyncio.sleep(5)
 
     while True:
         active = [k for k, v in state.items() if v]
@@ -300,7 +311,6 @@ async def monitor_loop():
 
 
 async def _send_alert(key: str, dates: dict[str, int]):
-    """إرسال إشعار تلغرام عند وجود مواعيد."""
     cal_id = CALENDAR_IDS[key]
     lines  = "\n".join(f"  • {d} — <b>{s} مكان</b>" for d, s in sorted(dates.items()))
     text   = (
