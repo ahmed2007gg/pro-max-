@@ -13,21 +13,18 @@ import aiohttp
 # ─────────────────────────────────────────
 #  ⚙️  إعدادات
 # ─────────────────────────────────────────
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8688561478:AAGRQ2a2qujKiRVHlfWck_bBvEw3NxDHhe0")
-CHAT_ID   = os.getenv("CHAT_ID",   "-1003680423989")
+BOT_TOKEN  = os.getenv("BOT_TOKEN", "8688561478:AAGRQ2a2qujKiRVHlfWck_bBvEw3NxDHhe0")
+CHAT_ID    = os.getenv("CHAT_ID",   "-1003680423989")
+ADMIN_ID   = int(os.getenv("ADMIN_ID", "8499305437"))  # ← ضع USER_ID بتاعك هنا
 
-CHECK_INTERVAL = 60   # ثانية
+CHECK_INTERVAL = 60
 
-# معرّفات التقويمات على Mosaic
 CALENDAR_IDS = {
     "algiers":  9,
     "oran":     7,
     "oran_vip": 8,
 }
 
-# ─────────────────────────────────────────
-#  📦  حالة المراقبة (في الذاكرة)
-# ─────────────────────────────────────────
 state: dict[str, bool] = {
     "algiers":  False,
     "oran":     False,
@@ -40,9 +37,6 @@ NAMES = {
     "oran_vip": "وهران VIP",
 }
 
-# ─────────────────────────────────────────
-#  🔧  إعداد اللوجر
-# ─────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -50,28 +44,26 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────
-#  🤖  إنشاء البوت
-# ─────────────────────────────────────────
 bot = Bot(token=BOT_TOKEN)
 dp  = Dispatcher()
 
+
 # ══════════════════════════════════════════
-#  🔒  Middleware — يقبل القروب فقط
+#  🔒  Middleware — الأوامر للأدمن فالبرايفت فقط
 # ══════════════════════════════════════════
-class GroupOnlyMiddleware(BaseMiddleware):
+class AdminPrivateOnlyMiddleware(BaseMiddleware):
     async def __call__(
         self,
         handler: Callable[[types.Message, dict], Awaitable[Any]],
         event: types.Message,
         data: dict
     ) -> Any:
-        if str(event.chat.id) != str(CHAT_ID):
-            log.info(f"🚫 رسالة مرفوضة من chat_id: {event.chat.id}")
-            return  # تجاهل تام
-        return await handler(event, data)
+        if event.chat.type == "private" and event.from_user.id == ADMIN_ID:
+            return await handler(event, data)
+        log.info(f"🚫 رسالة مرفوضة — chat: {event.chat.id}, user: {event.from_user.id}")
+        return
 
-dp.message.middleware(GroupOnlyMiddleware())
+dp.message.middleware(AdminPrivateOnlyMiddleware())
 
 
 # ══════════════════════════════════════════
@@ -79,7 +71,6 @@ dp.message.middleware(GroupOnlyMiddleware())
 # ══════════════════════════════════════════
 
 async def fetch_calendar(session: aiohttp.ClientSession, cal_id: int, month: str) -> str | None:
-    """جلب HTML صفحة التقويم من Mosaic."""
     url = f"https://appointment.mosaicvisa.com/calendar/{cal_id}?month={month}"
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
@@ -92,9 +83,7 @@ async def fetch_calendar(session: aiohttp.ClientSession, cal_id: int, month: str
 
 
 def parse_dates(html: str) -> dict[str, int]:
-    """استخراج التواريخ المتاحة من HTML التقويم."""
     from html.parser import HTMLParser
-
     available: dict[str, int] = {}
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -134,22 +123,9 @@ def get_months(ahead: int = 2) -> list[str]:
     return months
 
 
-async def check_algiers() -> dict[str, int]:
-    return await _check_center("algiers")
-
-
-async def check_oran() -> dict[str, int]:
-    return await _check_center("oran")
-
-
-async def check_oran_vip() -> dict[str, int]:
-    return await _check_center("oran_vip")
-
-
 async def _check_center(key: str) -> dict[str, int]:
     cal_id = CALENDAR_IDS[key]
     all_dates: dict[str, int] = {}
-
     async with aiohttp.ClientSession(
         headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"}
     ) as session:
@@ -158,53 +134,20 @@ async def _check_center(key: str) -> dict[str, int]:
             if html:
                 all_dates.update(parse_dates(html))
             await asyncio.sleep(1)
-
     return all_dates
 
 
+async def check_algiers()  -> dict[str, int]: return await _check_center("algiers")
+async def check_oran()     -> dict[str, int]: return await _check_center("oran")
+async def check_oran_vip() -> dict[str, int]: return await _check_center("oran_vip")
+
+
 # ══════════════════════════════════════════
-#  📱  أوامر البوت
+#  📱  أوامر البوت (برايفت أدمن فقط)
 # ══════════════════════════════════════════
 
 def status_icon(key: str) -> str:
     return "🟢 شغال" if state[key] else "🔴 متوقف"
-
-
-@dp.message(Command("check"))
-async def cmd_check(message: types.Message):
-    await message.answer("🔍 جاري الفحص، انتظر...")
-
-    for key in CALENDAR_IDS:
-        try:
-            cal_id = CALENDAR_IDS[key]
-            month  = get_months(1)[0]
-
-            async with aiohttp.ClientSession(
-                headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"}
-            ) as session:
-                html = await fetch_calendar(session, cal_id, month)
-
-            if html is None:
-                await message.answer(f"❌ <b>{NAMES[key]}</b>: فشل جلب الصفحة (الموقع بلوك أو داون)", parse_mode="HTML")
-                continue
-
-            dates = parse_dates(html)
-
-            if dates:
-                lines = "\n".join(f"  • {d} — {s} مكان" for d, s in sorted(dates.items()))
-                await message.answer(
-                    f"✅ <b>{NAMES[key]}</b>:\n{lines}",
-                    parse_mode="HTML"
-                )
-            else:
-                preview = html[:500].replace("<", "&lt;").replace(">", "&gt;")
-                await message.answer(
-                    f"📭 <b>{NAMES[key]}</b>: لا مواعيد — أول الـ HTML:\n<pre>{preview}</pre>",
-                    parse_mode="HTML"
-                )
-
-        except Exception as e:
-            await message.answer(f"💥 <b>{NAMES[key]}</b>: {e}", parse_mode="HTML")
 
 
 @dp.message(Command("start"))
@@ -219,61 +162,73 @@ async def cmd_start(message: types.Message):
         "<b>الأوامر المتاحة:</b>\n"
         "/algiers_on  — /algiers_off\n"
         "/oran_on  — /oran_off\n"
-        "/oran_vip_on  — /oran_vip_off"
+        "/oran_vip_on  — /oran_vip_off\n"
+        "/check — فحص فوري"
     )
     await message.answer(text, parse_mode="HTML")
 
 
-# ── الجزائر العاصمة ──────────────────────
+@dp.message(Command("check"))
+async def cmd_check(message: types.Message):
+    await message.answer("🔍 جاري الفحص، انتظر...")
+    for key in CALENDAR_IDS:
+        try:
+            cal_id = CALENDAR_IDS[key]
+            month  = get_months(1)[0]
+            async with aiohttp.ClientSession(
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"}
+            ) as session:
+                html = await fetch_calendar(session, cal_id, month)
+            if html is None:
+                await message.answer(f"❌ <b>{NAMES[key]}</b>: فشل جلب الصفحة", parse_mode="HTML")
+                continue
+            dates = parse_dates(html)
+            if dates:
+                lines = "\n".join(f"  • {d} — {s} مكان" for d, s in sorted(dates.items()))
+                await message.answer(f"✅ <b>{NAMES[key]}</b>:\n{lines}", parse_mode="HTML")
+            else:
+                preview = html[:500].replace("<", "&lt;").replace(">", "&gt;")
+                await message.answer(
+                    f"📭 <b>{NAMES[key]}</b>: لا مواعيد — أول الـ HTML:\n<pre>{preview}</pre>",
+                    parse_mode="HTML"
+                )
+        except Exception as e:
+            await message.answer(f"💥 <b>{NAMES[key]}</b>: {e}", parse_mode="HTML")
+
 
 @dp.message(Command("algiers_on"))
 async def cmd_algiers_on(message: types.Message):
     state["algiers"] = True
-    log.info("algiers → ON")
-    await message.answer("✅ تم تشغيل مراقبة مركز <b>الجزائر العاصمة</b>", parse_mode="HTML")
-
+    await message.answer("✅ تم تشغيل مراقبة <b>الجزائر العاصمة</b>", parse_mode="HTML")
 
 @dp.message(Command("algiers_off"))
 async def cmd_algiers_off(message: types.Message):
     state["algiers"] = False
-    log.info("algiers → OFF")
-    await message.answer("❌ تم إيقاف مراقبة مركز <b>الجزائر العاصمة</b>", parse_mode="HTML")
-
-
-# ── وهران ─────────────────────────────────
+    await message.answer("❌ تم إيقاف مراقبة <b>الجزائر العاصمة</b>", parse_mode="HTML")
 
 @dp.message(Command("oran_on"))
 async def cmd_oran_on(message: types.Message):
     state["oran"] = True
-    log.info("oran → ON")
-    await message.answer("✅ تم تشغيل مراقبة مركز <b>وهران</b>", parse_mode="HTML")
-
+    await message.answer("✅ تم تشغيل مراقبة <b>وهران</b>", parse_mode="HTML")
 
 @dp.message(Command("oran_off"))
 async def cmd_oran_off(message: types.Message):
     state["oran"] = False
-    log.info("oran → OFF")
-    await message.answer("❌ تم إيقاف مراقبة مركز <b>وهران</b>", parse_mode="HTML")
-
-
-# ── وهران VIP ─────────────────────────────
+    await message.answer("❌ تم إيقاف مراقبة <b>وهران</b>", parse_mode="HTML")
 
 @dp.message(Command("oran_vip_on"))
 async def cmd_oran_vip_on(message: types.Message):
     state["oran_vip"] = True
-    log.info("oran_vip → ON")
-    await message.answer("✅ تم تشغيل مراقبة مركز <b>وهران VIP</b>", parse_mode="HTML")
-
+    await message.answer("✅ تم تشغيل مراقبة <b>وهران VIP</b>", parse_mode="HTML")
 
 @dp.message(Command("oran_vip_off"))
 async def cmd_oran_vip_off(message: types.Message):
     state["oran_vip"] = False
-    log.info("oran_vip → OFF")
-    await message.answer("❌ تم إيقاف مراقبة مركز <b>وهران VIP</b>", parse_mode="HTML")
+    await message.answer("❌ تم إيقاف مراقبة <b>وهران VIP</b>", parse_mode="HTML")
 
 
 # ══════════════════════════════════════════
-#  🔁  Loop المراقبة
+#  🔁  Loop المراقبة — يرسل للقروب فقط
 # ══════════════════════════════════════════
 
 CHECKERS = {
@@ -285,10 +240,8 @@ CHECKERS = {
 
 async def monitor_loop():
     await asyncio.sleep(5)
-
     while True:
         active = [k for k, v in state.items() if v]
-
         if active:
             log.info(f"🔍 فحص: {', '.join(active)}")
         else:
@@ -297,13 +250,11 @@ async def monitor_loop():
         for key in active:
             try:
                 dates = await CHECKERS[key]()
-
                 if dates:
-                    log.info(f"🚨 {NAMES[key]}: {len(dates)} موعد متاح — جاري الإرسال")
+                    log.info(f"🚨 {NAMES[key]}: {len(dates)} موعد — جاري الإرسال للقروب")
                     await _send_alert(key, dates)
                 else:
                     log.info(f"📭 {NAMES[key]}: لا توجد مواعيد")
-
             except Exception as e:
                 log.error(f"خطأ في فحص {key}: {e}")
 
