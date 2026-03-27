@@ -15,9 +15,14 @@ import aiohttp
 # ─────────────────────────────────────────
 BOT_TOKEN  = os.getenv("BOT_TOKEN", "8688561478:AAGRQ2a2qujKiRVHlfWck_bBvEw3NxDHhe0")
 CHAT_ID    = os.getenv("CHAT_ID",   "-1003680423989")
-ADMIN_ID   = int(os.getenv("ADMIN_ID", "8499305437"))  # ← ضع USER_ID بتاعك هنا
+ADMIN_ID   = int(os.getenv("ADMIN_ID", "8499305437"))
 
-CHECK_INTERVAL = 60
+# ✅ كل مركز له فترة فحص خاصة (بالثواني)
+CHECK_INTERVALS = {
+    "algiers":  60,      # كل دقيقة
+    "oran":     3600,    # كل ساعة
+    "oran_vip": 3600,    # كل ساعة
+}
 
 CALENDAR_IDS = {
     "algiers":  9,
@@ -29,6 +34,13 @@ state: dict[str, bool] = {
     "algiers":  False,
     "oran":     False,
     "oran_vip": False,
+}
+
+# ✅ يتتبع وقت آخر فحص لكل مركز
+last_checked: dict[str, float] = {
+    "algiers":  0.0,
+    "oran":     0.0,
+    "oran_vip": 0.0,
 }
 
 NAMES = {
@@ -149,15 +161,24 @@ async def check_oran_vip() -> dict[str, int]: return await _check_center("oran_v
 def status_icon(key: str) -> str:
     return "🟢 شغال" if state[key] else "🔴 متوقف"
 
+def interval_label(key: str) -> str:
+    secs = CHECK_INTERVALS[key]
+    if secs < 60:
+        return f"{secs}ث"
+    elif secs < 3600:
+        return f"{secs // 60}د"
+    else:
+        return f"{secs // 3600}س"
+
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     text = (
         "🇩🇿 <b>Mosaic Visa Monitor</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📍 الجزائر العاصمة : {status_icon('algiers')}\n"
-        f"📍 وهران             : {status_icon('oran')}\n"
-        f"📍 وهران VIP         : {status_icon('oran_vip')}\n\n"
+        f"📍 الجزائر العاصمة : {status_icon('algiers')} (كل {interval_label('algiers')})\n"
+        f"📍 وهران             : {status_icon('oran')} (كل {interval_label('oran')})\n"
+        f"📍 وهران VIP         : {status_icon('oran_vip')} (كل {interval_label('oran_vip')})\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "<b>الأوامر المتاحة:</b>\n"
         "/algiers_on  — /algiers_off\n"
@@ -240,16 +261,43 @@ CHECKERS = {
 
 async def monitor_loop():
     await asyncio.sleep(5)
+
+    # ✅ رسالة تم التحديث — تُرسل مرة واحدة عند البدء
+    try:
+        await bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                "🔄 <b>تم تحديث البوت بنجاح!</b>\n\n"
+                f"📍 الجزائر العاصمة : كل {interval_label('algiers')}\n"
+                f"📍 وهران             : كل {interval_label('oran')}\n"
+                f"📍 وهران VIP         : كل {interval_label('oran_vip')}\n\n"
+                f"⏰ {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+            ),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        log.error(f"فشل إرسال رسالة التحديث: {e}")
+
     while True:
+        now = asyncio.get_event_loop().time()
         active = [k for k, v in state.items() if v]
+
         if active:
-            log.info(f"🔍 فحص: {', '.join(active)}")
+            log.info(f"🔍 فحص دوري: {', '.join(active)}")
         else:
             log.info("💤 جميع المراكز متوقفة")
 
         for key in active:
+            # ✅ تحقق إذا حان وقت الفحص لهذا المركز
+            elapsed = now - last_checked[key]
+            if elapsed < CHECK_INTERVALS[key]:
+                remaining = int(CHECK_INTERVALS[key] - elapsed)
+                log.info(f"⏳ {NAMES[key]}: متبقي {remaining}ث للفحص القادم")
+                continue
+
             try:
                 dates = await CHECKERS[key]()
+                last_checked[key] = asyncio.get_event_loop().time()
                 if dates:
                     log.info(f"🚨 {NAMES[key]}: {len(dates)} موعد — جاري الإرسال للقروب")
                     await _send_alert(key, dates)
@@ -258,7 +306,7 @@ async def monitor_loop():
             except Exception as e:
                 log.error(f"خطأ في فحص {key}: {e}")
 
-        await asyncio.sleep(CHECK_INTERVAL)
+        await asyncio.sleep(60)  # الـ loop الرئيسي يعمل كل دقيقة
 
 
 async def _send_alert(key: str, dates: dict[str, int]):
