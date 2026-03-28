@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import json
 import os
 from datetime import datetime
 from typing import Callable, Awaitable, Any
@@ -17,12 +16,14 @@ BOT_TOKEN  = os.getenv("BOT_TOKEN", "8688561478:AAGRQ2a2qujKiRVHlfWck_bBvEw3NxDH
 CHAT_ID    = os.getenv("CHAT_ID",   "-1003680423989")
 ADMIN_ID   = int(os.getenv("ADMIN_ID", "8499305437"))
 
-# ✅ كل مركز له فترة فحص خاصة (بالثواني)
+# ✅ قسنطينة فقط لها حد — باقي المراكز يرسلون عند أي مواعيد
+CONSTANTINE_THRESHOLD = 10
+
 CHECK_INTERVALS = {
-    "algiers":      60,      # كل دقيقة
-    "constantine":  60,      # كل دقيقة
-    "oran":         3600,    # كل ساعة
-    "oran_vip":     3600,    # كل ساعة
+    "algiers":      60,
+    "constantine":  60,
+    "oran":         3600,
+    "oran_vip":     3600,
 }
 
 CALENDAR_IDS = {
@@ -39,13 +40,16 @@ state: dict[str, bool] = {
     "oran_vip":     False,
 }
 
-# ✅ يتتبع وقت آخر فحص لكل مركز
 last_checked: dict[str, float] = {
     "algiers":      0.0,
     "constantine":  0.0,
     "oran":         0.0,
     "oran_vip":     0.0,
 }
+
+# ✅ للقسنطينة فقط: يتتبع إذا أُرسل إشعار "أقل من 10"
+# يُعاد تصفيره لما يرتفع المجموع فوق 10 مجدداً
+constantine_alert_sent: bool = False
 
 NAMES = {
     "algiers":      "الجزائر العاصمة",
@@ -66,7 +70,7 @@ dp  = Dispatcher()
 
 
 # ══════════════════════════════════════════
-#  🔒  Middleware — الأوامر للأدمن فالبرايفت فقط
+#  🔒  Middleware
 # ══════════════════════════════════════════
 class AdminPrivateOnlyMiddleware(BaseMiddleware):
     async def __call__(
@@ -105,8 +109,8 @@ def parse_dates(html: str) -> dict[str, int]:
     today = datetime.now().strftime("%Y-%m-%d")
 
     class _Parser(HTMLParser):
-        _cur_date = ""
-        _cur_rem  = 0
+        _cur_date  = ""
+        _cur_rem   = 0
         _in_strong = False
 
         def handle_starttag(self, tag, attrs):
@@ -154,14 +158,14 @@ async def _check_center(key: str) -> dict[str, int]:
     return all_dates
 
 
-async def check_algiers()      -> dict[str, int]: return await _check_center("algiers")
-async def check_constantine()  -> dict[str, int]: return await _check_center("constantine")
-async def check_oran()         -> dict[str, int]: return await _check_center("oran")
-async def check_oran_vip()     -> dict[str, int]: return await _check_center("oran_vip")
+async def check_algiers()     -> dict[str, int]: return await _check_center("algiers")
+async def check_constantine() -> dict[str, int]: return await _check_center("constantine")
+async def check_oran()        -> dict[str, int]: return await _check_center("oran")
+async def check_oran_vip()    -> dict[str, int]: return await _check_center("oran_vip")
 
 
 # ══════════════════════════════════════════
-#  📱  أوامر البوت (برايفت أدمن فقط)
+#  📱  أوامر البوت
 # ══════════════════════════════════════════
 
 def status_icon(key: str) -> str:
@@ -169,12 +173,9 @@ def status_icon(key: str) -> str:
 
 def interval_label(key: str) -> str:
     secs = CHECK_INTERVALS[key]
-    if secs < 60:
-        return f"{secs}ث"
-    elif secs < 3600:
-        return f"{secs // 60}د"
-    else:
-        return f"{secs // 3600}س"
+    if secs < 60:     return f"{secs}ث"
+    elif secs < 3600: return f"{secs // 60}د"
+    else:             return f"{secs // 3600}س"
 
 
 @dp.message(Command("start"))
@@ -183,7 +184,7 @@ async def cmd_start(message: types.Message):
         "🇩🇿 <b>Mosaic Visa Monitor</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📍 الجزائر العاصمة : {status_icon('algiers')} (كل {interval_label('algiers')})\n"
-        f"📍 قسنطينة          : {status_icon('constantine')} (كل {interval_label('constantine')})\n"
+        f"📍 قسنطينة          : {status_icon('constantine')} (كل {interval_label('constantine')}) — إشعار عند أقل من {CONSTANTINE_THRESHOLD}\n"
         f"📍 وهران             : {status_icon('oran')} (كل {interval_label('oran')})\n"
         f"📍 وهران VIP         : {status_icon('oran_vip')} (كل {interval_label('oran_vip')})\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -212,15 +213,15 @@ async def cmd_check(message: types.Message):
                 await message.answer(f"❌ <b>{NAMES[key]}</b>: فشل جلب الصفحة", parse_mode="HTML")
                 continue
             dates = parse_dates(html)
+            total = sum(dates.values())
             if dates:
                 lines = "\n".join(f"  • {d} — {s} مكان" for d, s in sorted(dates.items()))
-                await message.answer(f"✅ <b>{NAMES[key]}</b>:\n{lines}", parse_mode="HTML")
-            else:
-                preview = html[:500].replace("<", "&lt;").replace(">", "&gt;")
                 await message.answer(
-                    f"📭 <b>{NAMES[key]}</b>: لا مواعيد — أول الـ HTML:\n<pre>{preview}</pre>",
+                    f"✅ <b>{NAMES[key]}</b> — المجموع: <b>{total} مكان</b>\n{lines}",
                     parse_mode="HTML"
                 )
+            else:
+                await message.answer(f"📭 <b>{NAMES[key]}</b>: لا مواعيد", parse_mode="HTML")
         except Exception as e:
             await message.answer(f"💥 <b>{NAMES[key]}</b>: {e}", parse_mode="HTML")
 
@@ -267,7 +268,7 @@ async def cmd_oran_vip_off(message: types.Message):
 
 
 # ══════════════════════════════════════════
-#  🔁  Loop المراقبة — يرسل للقروب فقط
+#  🔁  Loop المراقبة
 # ══════════════════════════════════════════
 
 CHECKERS = {
@@ -279,16 +280,16 @@ CHECKERS = {
 
 
 async def monitor_loop():
+    global constantine_alert_sent
     await asyncio.sleep(5)
 
-    # ✅ رسالة تم التحديث — تُرسل مرة واحدة عند البدء
     try:
         await bot.send_message(
             chat_id=ADMIN_ID,
             text=(
                 "🔄 <b>تم تحديث البوت بنجاح!</b>\n\n"
                 f"📍 الجزائر العاصمة : كل {interval_label('algiers')}\n"
-                f"📍 قسنطينة          : كل {interval_label('constantine')}\n"
+                f"📍 قسنطينة          : كل {interval_label('constantine')} — إشعار عند أقل من {CONSTANTINE_THRESHOLD}\n"
                 f"📍 وهران             : كل {interval_label('oran')}\n"
                 f"📍 وهران VIP         : كل {interval_label('oran_vip')}\n\n"
                 f"⏰ {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
@@ -299,7 +300,7 @@ async def monitor_loop():
         log.error(f"فشل إرسال رسالة التحديث: {e}")
 
     while True:
-        now = asyncio.get_event_loop().time()
+        now    = asyncio.get_event_loop().time()
         active = [k for k, v in state.items() if v]
 
         if active:
@@ -308,7 +309,6 @@ async def monitor_loop():
             log.info("💤 جميع المراكز متوقفة")
 
         for key in active:
-            # ✅ تحقق إذا حان وقت الفحص لهذا المركز
             elapsed = now - last_checked[key]
             if elapsed < CHECK_INTERVALS[key]:
                 remaining = int(CHECK_INTERVALS[key] - elapsed)
@@ -318,17 +318,47 @@ async def monitor_loop():
             try:
                 dates = await CHECKERS[key]()
                 last_checked[key] = asyncio.get_event_loop().time()
-                if dates:
-                    log.info(f"🚨 {NAMES[key]}: {len(dates)} موعد — جاري الإرسال للقروب")
-                    await _send_alert(key, dates)
+                total = sum(dates.values())
+                log.info(f"📊 {NAMES[key]}: {total} مكان في {len(dates)} تاريخ")
+
+                if key == "constantine":
+                    # ── منطق خاص: أرسل فقط لما المجموع أقل من الحد ──
+                    if 0 < total < CONSTANTINE_THRESHOLD:
+                        if not constantine_alert_sent:
+                            log.info(f"🚨 قسنطينة: {total} مكان < {CONSTANTINE_THRESHOLD} — إرسال إشعار")
+                            await _send_alert_threshold(dates, total)
+                            constantine_alert_sent = True
+                        else:
+                            log.info(f"🔕 قسنطينة: {total} مكان — إشعار سبق إرساله")
+                    elif total >= CONSTANTINE_THRESHOLD:
+                        if constantine_alert_sent:
+                            log.info(f"✅ قسنطينة: ارتفع لـ {total} مكان — تم تصفير flag الإشعار")
+                            constantine_alert_sent = False
+                        else:
+                            log.info(f"✅ قسنطينة: {total} مكان — لا حاجة لإشعار")
+                    else:
+                        # total == 0
+                        if constantine_alert_sent:
+                            constantine_alert_sent = False
+                            log.info("🔄 قسنطينة: لا مواعيد — تم تصفير flag الإشعار")
+                        else:
+                            log.info("📭 قسنطينة: لا توجد مواعيد")
+
                 else:
-                    log.info(f"📭 {NAMES[key]}: لا توجد مواعيد")
+                    # ── المنطق الأصلي: أرسل عند أي مواعيد ──
+                    if dates:
+                        log.info(f"🚨 {NAMES[key]}: {len(dates)} موعد — جاري الإرسال للقروب")
+                        await _send_alert(key, dates)
+                    else:
+                        log.info(f"📭 {NAMES[key]}: لا توجد مواعيد")
+
             except Exception as e:
                 log.error(f"خطأ في فحص {key}: {e}")
 
-        await asyncio.sleep(60)  # الـ loop الرئيسي يعمل كل دقيقة
+        await asyncio.sleep(60)
 
 
+# إشعار المراكز العادية (عند وجود أي مواعيد)
 async def _send_alert(key: str, dates: dict[str, int]):
     cal_id = CALENDAR_IDS[key]
     lines  = "\n".join(f"  • {d} — <b>{s} مكان</b>" for d, s in sorted(dates.items()))
@@ -336,6 +366,30 @@ async def _send_alert(key: str, dates: dict[str, int]):
         f"🚨🚨🚨 <b>مواعيد متاحة!</b>\n\n"
         f"📍 <b>{NAMES[key]}</b>\n\n"
         f"📅 <b>التواريخ:</b>\n{lines}\n\n"
+        f"⏰ {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n"
+        f"⚡ <i>سارع بالحجز!</i>"
+    )
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[[
+        types.InlineKeyboardButton(
+            text="📅 احجز الآن",
+            url=f"https://appointment.mosaicvisa.com/calendar/{CALENDAR_IDS[key]}"
+        )
+    ]])
+    try:
+        await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        log.error(f"فشل إرسال الإشعار: {e}")
+
+
+# إشعار قسنطينة (عند نزول المجموع تحت الحد)
+async def _send_alert_threshold(dates: dict[str, int], total: int):
+    cal_id = CALENDAR_IDS["constantine"]
+    lines  = "\n".join(f"  • {d} — <b>{s} مكان</b>" for d, s in sorted(dates.items()))
+    text   = (
+        f"⚠️⚠️⚠️ <b>مواعيد قسنطينة تنفد!</b>\n\n"
+        f"📍 <b>قسنطينة</b>\n"
+        f"🪑 المجموع: <b>{total} مكان فقط</b>\n\n"
+        f"📅 <b>التواريخ المتاحة:</b>\n{lines}\n\n"
         f"⏰ {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n"
         f"⚡ <i>سارع بالحجز!</i>"
     )
@@ -357,16 +411,16 @@ async def _send_alert(key: str, dates: dict[str, int]):
 
 async def set_commands():
     await bot.set_my_commands([
-        BotCommand(command="start",             description="حالة البوت"),
-        BotCommand(command="check",             description="فحص فوري"),
-        BotCommand(command="algiers_on",        description="تشغيل الجزائر العاصمة"),
-        BotCommand(command="algiers_off",       description="إيقاف الجزائر العاصمة"),
-        BotCommand(command="constantine_on",    description="تشغيل قسنطينة"),
-        BotCommand(command="constantine_off",   description="إيقاف قسنطينة"),
-        BotCommand(command="oran_on",           description="تشغيل وهران"),
-        BotCommand(command="oran_off",          description="إيقاف وهران"),
-        BotCommand(command="oran_vip_on",       description="تشغيل وهران VIP"),
-        BotCommand(command="oran_vip_off",      description="إيقاف وهران VIP"),
+        BotCommand(command="start",           description="حالة البوت"),
+        BotCommand(command="check",           description="فحص فوري"),
+        BotCommand(command="algiers_on",      description="تشغيل الجزائر العاصمة"),
+        BotCommand(command="algiers_off",     description="إيقاف الجزائر العاصمة"),
+        BotCommand(command="constantine_on",  description="تشغيل قسنطينة"),
+        BotCommand(command="constantine_off", description="إيقاف قسنطينة"),
+        BotCommand(command="oran_on",         description="تشغيل وهران"),
+        BotCommand(command="oran_off",        description="إيقاف وهران"),
+        BotCommand(command="oran_vip_on",     description="تشغيل وهران VIP"),
+        BotCommand(command="oran_vip_off",    description="إيقاف وهران VIP"),
     ])
 
 
