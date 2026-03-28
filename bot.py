@@ -19,34 +19,39 @@ ADMIN_ID   = int(os.getenv("ADMIN_ID", "8499305437"))
 
 # ✅ كل مركز له فترة فحص خاصة (بالثواني)
 CHECK_INTERVALS = {
-    "algiers":  60,      # كل دقيقة
-    "oran":     3600,    # كل ساعة
-    "oran_vip": 3600,    # كل ساعة
+    "algiers":      60,      # كل دقيقة
+    "constantine":  60,      # كل دقيقة
+    "oran":         3600,    # كل ساعة
+    "oran_vip":     3600,    # كل ساعة
 }
 
 CALENDAR_IDS = {
-    "algiers":  9,
-    "oran":     7,
-    "oran_vip": 8,
+    "algiers":      9,
+    "constantine":  17,
+    "oran":         7,
+    "oran_vip":     8,
 }
 
 state: dict[str, bool] = {
-    "algiers":  False,
-    "oran":     False,
-    "oran_vip": False,
+    "algiers":      False,
+    "constantine":  False,
+    "oran":         False,
+    "oran_vip":     False,
 }
 
 # ✅ يتتبع وقت آخر فحص لكل مركز
 last_checked: dict[str, float] = {
-    "algiers":  0.0,
-    "oran":     0.0,
-    "oran_vip": 0.0,
+    "algiers":      0.0,
+    "constantine":  0.0,
+    "oran":         0.0,
+    "oran_vip":     0.0,
 }
 
 NAMES = {
-    "algiers":  "الجزائر العاصمة",
-    "oran":     "وهران",
-    "oran_vip": "وهران VIP",
+    "algiers":      "الجزائر العاصمة",
+    "constantine":  "قسنطينة",
+    "oran":         "وهران",
+    "oran_vip":     "وهران VIP",
 }
 
 logging.basicConfig(
@@ -149,9 +154,10 @@ async def _check_center(key: str) -> dict[str, int]:
     return all_dates
 
 
-async def check_algiers()  -> dict[str, int]: return await _check_center("algiers")
-async def check_oran()     -> dict[str, int]: return await _check_center("oran")
-async def check_oran_vip() -> dict[str, int]: return await _check_center("oran_vip")
+async def check_algiers()      -> dict[str, int]: return await _check_center("algiers")
+async def check_constantine()  -> dict[str, int]: return await _check_center("constantine")
+async def check_oran()         -> dict[str, int]: return await _check_center("oran")
+async def check_oran_vip()     -> dict[str, int]: return await _check_center("oran_vip")
 
 
 # ══════════════════════════════════════════
@@ -177,11 +183,13 @@ async def cmd_start(message: types.Message):
         "🇩🇿 <b>Mosaic Visa Monitor</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📍 الجزائر العاصمة : {status_icon('algiers')} (كل {interval_label('algiers')})\n"
+        f"📍 قسنطينة          : {status_icon('constantine')} (كل {interval_label('constantine')})\n"
         f"📍 وهران             : {status_icon('oran')} (كل {interval_label('oran')})\n"
         f"📍 وهران VIP         : {status_icon('oran_vip')} (كل {interval_label('oran_vip')})\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "<b>الأوامر المتاحة:</b>\n"
         "/algiers_on  — /algiers_off\n"
+        "/constantine_on  — /constantine_off\n"
         "/oran_on  — /oran_off\n"
         "/oran_vip_on  — /oran_vip_off\n"
         "/check — فحص فوري"
@@ -227,6 +235,16 @@ async def cmd_algiers_off(message: types.Message):
     state["algiers"] = False
     await message.answer("❌ تم إيقاف مراقبة <b>الجزائر العاصمة</b>", parse_mode="HTML")
 
+@dp.message(Command("constantine_on"))
+async def cmd_constantine_on(message: types.Message):
+    state["constantine"] = True
+    await message.answer("✅ تم تشغيل مراقبة <b>قسنطينة</b>", parse_mode="HTML")
+
+@dp.message(Command("constantine_off"))
+async def cmd_constantine_off(message: types.Message):
+    state["constantine"] = False
+    await message.answer("❌ تم إيقاف مراقبة <b>قسنطينة</b>", parse_mode="HTML")
+
 @dp.message(Command("oran_on"))
 async def cmd_oran_on(message: types.Message):
     state["oran"] = True
@@ -253,9 +271,10 @@ async def cmd_oran_vip_off(message: types.Message):
 # ══════════════════════════════════════════
 
 CHECKERS = {
-    "algiers":  check_algiers,
-    "oran":     check_oran,
-    "oran_vip": check_oran_vip,
+    "algiers":      check_algiers,
+    "constantine":  check_constantine,
+    "oran":         check_oran,
+    "oran_vip":     check_oran_vip,
 }
 
 
@@ -269,6 +288,7 @@ async def monitor_loop():
             text=(
                 "🔄 <b>تم تحديث البوت بنجاح!</b>\n\n"
                 f"📍 الجزائر العاصمة : كل {interval_label('algiers')}\n"
+                f"📍 قسنطينة          : كل {interval_label('constantine')}\n"
                 f"📍 وهران             : كل {interval_label('oran')}\n"
                 f"📍 وهران VIP         : كل {interval_label('oran_vip')}\n\n"
                 f"⏰ {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
@@ -337,14 +357,16 @@ async def _send_alert(key: str, dates: dict[str, int]):
 
 async def set_commands():
     await bot.set_my_commands([
-        BotCommand(command="start",        description="حالة البوت"),
-        BotCommand(command="check",        description="فحص فوري + "),
-        BotCommand(command="algiers_on",   description="تشغيل الجزائر العاصمة"),
-        BotCommand(command="algiers_off",  description="إيقاف الجزائر العاصمة"),
-        BotCommand(command="oran_on",      description="تشغيل وهران"),
-        BotCommand(command="oran_off",     description="إيقاف وهران"),
-        BotCommand(command="oran_vip_on",  description="تشغيل وهران VIP"),
-        BotCommand(command="oran_vip_off", description="إيقاف وهران VIP"),
+        BotCommand(command="start",             description="حالة البوت"),
+        BotCommand(command="check",             description="فحص فوري"),
+        BotCommand(command="algiers_on",        description="تشغيل الجزائر العاصمة"),
+        BotCommand(command="algiers_off",       description="إيقاف الجزائر العاصمة"),
+        BotCommand(command="constantine_on",    description="تشغيل قسنطينة"),
+        BotCommand(command="constantine_off",   description="إيقاف قسنطينة"),
+        BotCommand(command="oran_on",           description="تشغيل وهران"),
+        BotCommand(command="oran_off",          description="إيقاف وهران"),
+        BotCommand(command="oran_vip_on",       description="تشغيل وهران VIP"),
+        BotCommand(command="oran_vip_off",      description="إيقاف وهران VIP"),
     ])
 
 
