@@ -20,8 +20,8 @@ ADMIN_ID   = int(os.getenv("ADMIN_ID", "8499305437"))
 # ✅ كل مركز له فترة فحص خاصة (بالثواني)
 CHECK_INTERVALS = {
     "algiers":  60,      # كل دقيقة
-    "oran":     3600,    # كل ساعة
-    "oran_vip": 3600,    # كل ساعة
+    "oran":     600,    # كل ساعة
+    "oran_vip": 600,    # كل ساعة
 }
 
 CALENDAR_IDS = {
