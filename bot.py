@@ -338,7 +338,7 @@ async def _send_alert(key: str, dates: dict[str, int]):
 async def set_commands():
     await bot.set_my_commands([
         BotCommand(command="start",        description="حالة البوت"),
-        BotCommand(command="check",        description="فحص فوري + تشخيص"),
+        BotCommand(command="check",        description="فحص فوري + "),
         BotCommand(command="algiers_on",   description="تشغيل الجزائر العاصمة"),
         BotCommand(command="algiers_off",  description="إيقاف الجزائر العاصمة"),
         BotCommand(command="oran_on",      description="تشغيل وهران"),
