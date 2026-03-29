@@ -18,8 +18,6 @@ CHAT_ID    = os.getenv("CHAT_ID",   "-1003680423989")
 ADMIN_ID   = int(os.getenv("ADMIN_ID", "8499305437"))
 STATS_FILE = "stats.json"
 
-CONSTANTINE_THRESHOLD = 10
-
 DROP_THRESHOLDS: dict[str, int] = {
     "algiers":      5,
     "constantine":  5,
@@ -44,7 +42,6 @@ CALENDAR_IDS = {
 state: dict[str, bool] = {k: False for k in CALENDAR_IDS}
 last_checked: dict[str, float] = {k: 0.0 for k in CALENDAR_IDS}
 last_total: dict[str, int | None] = {k: None for k in CALENDAR_IDS}
-constantine_alert_sent: bool = False
 
 # ── ساعات صامتة (24h) ──
 quiet_start: int = 0   # 0 = معطل
@@ -285,7 +282,7 @@ async def cmd_start(message: types.Message):
         "🇩🇿 <b>Mosaic Visa Monitor</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📍 الجزائر  : {status_icon('algiers')} — {interval_label('algiers')} — نقصان≥{DROP_THRESHOLDS['algiers']}\n"
-        f"📍 قسنطينة  : {status_icon('constantine')} — {interval_label('constantine')} — &lt;{CONSTANTINE_THRESHOLD} — نقصان≥{DROP_THRESHOLDS['constantine']}\n"
+        f"📍 قسنطينة  : {status_icon('constantine')} — {interval_label('constantine')} — نقصان≥{DROP_THRESHOLDS['constantine']}\n"
         f"📍 وهران    : {status_icon('oran')} — {interval_label('oran')} — نقصان≥{DROP_THRESHOLDS['oran']}\n"
         f"📍 وهران VIP: {status_icon('oran_vip')} — {interval_label('oran_vip')} — نقصان≥{DROP_THRESHOLDS['oran_vip']}\n\n"
         f"🌙 ساعات صامتة : {quiet_str}\n"
@@ -299,12 +296,12 @@ async def cmd_start(message: types.Message):
         "<b>إعدادات:</b>\n"
         "/interval [مكان] [قيمة]  — توقيت الفحص\n"
         "/drop [مكان] [رقم]       — حد النقصان\n"
-        "/cthreshold [رقم]        — حد قسنطينة\n"
         "/quiet [بداية] [نهاية]   — ساعات صامتة\n"
         "/pause [مدة]             — إيقاف مؤقت\n"
         "/heartbeat [مدة]         — نبض التأكيد\n\n"
         "<b>معلومات:</b>\n"
         "/intervals · /drops · /stats · /check\n"
+        "/reset [مكان|all]        — إعادة تعيين إحصائيات\n"
         "/daily — تقرير يومي فوري"
     )
     await message.answer(text, parse_mode="HTML")
@@ -415,23 +412,6 @@ async def cmd_drop(msg: types.Message):
         await msg.answer(f"📉 حد النقصان لـ <b>{NAMES[key]}</b>: {'معطل' if old==0 else f'{old}+'} ← <b>{value}+</b>", parse_mode="HTML")
 
 
-# ── حد قسنطينة ──
-@dp.message(Command("cthreshold"))
-async def cmd_cthreshold(msg: types.Message):
-    global CONSTANTINE_THRESHOLD, constantine_alert_sent
-    args = (msg.text or "").split()[1:]
-    if len(args) != 1:
-        await msg.answer(f"⚠️ <code>/cthreshold [رقم]</code>\nالحالي: <b>{CONSTANTINE_THRESHOLD}</b>", parse_mode="HTML"); return
-    try:
-        value = int(args[0])
-        if value < 1: raise ValueError
-    except ValueError:
-        await msg.answer("❌ الرقم يجب ≥ 1", parse_mode="HTML"); return
-    old = CONSTANTINE_THRESHOLD
-    CONSTANTINE_THRESHOLD = value
-    constantine_alert_sent = False
-    await msg.answer(f"✅ حد قسنطينة: <b>{old}</b> ← <b>{value}</b>", parse_mode="HTML")
-
 
 # ── ساعات صامتة ──
 @dp.message(Command("quiet"))
@@ -532,6 +512,57 @@ async def cmd_stats(msg: types.Message):
     await msg.answer("📊 <b>الإحصائيات:</b>\n\n" + "\n\n".join(lines), parse_mode="HTML")
 
 
+# ── إعادة تعيين إحصائيات ──
+@dp.message(Command("reset"))
+async def cmd_reset(msg: types.Message):
+    args = (msg.text or "").split()[1:]
+    valid_keys = list(CALENDAR_IDS.keys()) + ["all"]
+
+    if len(args) == 0:
+        keys_str = "\n".join(f"  • <code>{k}</code> — {NAMES.get(k, k)}" for k in CALENDAR_IDS)
+        await msg.answer(
+            "🔄 <b>إعادة تعيين الإحصائيات</b>\n\n"
+            f"<i>/reset [مكان]</i>\n\n"
+            f"الأماكن المتاحة:\n{keys_str}\n"
+            f"  • <code>all</code> — جميع المراكز",
+            parse_mode="HTML"
+        )
+        return
+
+    key = args[0].lower()
+    if key not in valid_keys:
+        await msg.answer(f"❌ مكان غير معروف: <code>{key}</code>", parse_mode="HTML")
+        return
+
+    if key == "all":
+        for k in CALENDAR_IDS:
+            stats[k] = {
+                "alerts_sent":  0,
+                "drop_alerts":  0,
+                "rise_alerts":  0,
+                "last_alert":   None,
+                "peak_total":   0,
+                "lowest_total": None,
+                "checks_done":  0,
+            }
+            last_total[k] = None
+        _save_stats()
+        await msg.answer("✅ تم إعادة تعيين إحصائيات <b>جميع المراكز</b>", parse_mode="HTML")
+    else:
+        stats[key] = {
+            "alerts_sent":  0,
+            "drop_alerts":  0,
+            "rise_alerts":  0,
+            "last_alert":   None,
+            "peak_total":   0,
+            "lowest_total": None,
+            "checks_done":  0,
+        }
+        last_total[key] = None
+        _save_stats()
+        await msg.answer(f"✅ تم إعادة تعيين إحصائيات <b>{NAMES[key]}</b>", parse_mode="HTML")
+
+
 # ── تقرير يومي فوري ──
 @dp.message(Command("daily"))
 async def cmd_daily(msg: types.Message):
@@ -580,7 +611,7 @@ last_daily_day: int = -1
 
 
 async def monitor_loop():
-    global constantine_alert_sent, last_heartbeat, last_daily_day
+    global last_heartbeat, last_daily_day
 
     _load_stats()
     await asyncio.sleep(5)
@@ -699,33 +730,16 @@ async def monitor_loop():
 
                 last_total[key] = total
 
-                # ── منطق قسنطينة ──
-                if key == "constantine":
-                    if 0 < total < CONSTANTINE_THRESHOLD:
-                        if not constantine_alert_sent:
-                            if not is_quiet_time() and not is_paused():
-                                await _send_alert_threshold(dates, total)
-                                _update_stats(key, total, "alert")
-                            constantine_alert_sent = True
-                        else:
-                            log.info(f"🔕 قسنطينة: إشعار سبق إرساله")
-                    elif total >= CONSTANTINE_THRESHOLD:
-                        if constantine_alert_sent:
-                            constantine_alert_sent = False
-                    else:
-                        constantine_alert_sent = False
-
-                # ── المنطق الأصلي للمراكز الأخرى ──
-                else:
-                    if dates and not is_quiet_time() and not is_paused():
-                        await _send_alert(key, dates)
-                        _update_stats(key, total, "alert")
-                    elif not dates:
-                        log.info(f"📭 {NAMES[key]}: لا مواعيد")
-                    elif is_quiet_time():
-                        log.info(f"🌙 {NAMES[key]}: ساعة صامتة — تم تخطي الإشعار")
-                    elif is_paused():
-                        log.info(f"⏸ {NAMES[key]}: موقوف مؤقتاً — تم تخطي الإشعار")
+                # ── منطق موحّد لجميع المراكز ──
+                if dates and not is_quiet_time() and not is_paused():
+                    await _send_alert(key, dates)
+                    _update_stats(key, total, "alert")
+                elif not dates:
+                    log.info(f"📭 {NAMES[key]}: لا مواعيد")
+                elif is_quiet_time():
+                    log.info(f"🌙 {NAMES[key]}: ساعة صامتة — تم تخطي الإشعار")
+                elif is_paused():
+                    log.info(f"⏸ {NAMES[key]}: موقوف مؤقتاً — تم تخطي الإشعار")
 
             except Exception as e:
                 log.error(f"خطأ في فحص {key}: {e}")
@@ -760,16 +774,6 @@ async def _send_alert(key: str, dates: dict[str, int]):
         f"⚡ <i>سارع بالحجز!</i>"
     )
 
-async def _send_alert_threshold(dates: dict[str, int], total: int):
-    lines = "\n".join(f"  • {d} — <b>{s} مكان</b>" for d, s in sorted(dates.items()))
-    await _send_to_group("constantine",
-        f"⚠️⚠️⚠️ <b>مواعيد قسنطينة تنفد!</b>\n\n"
-        f"📍 <b>قسنطينة</b>\n"
-        f"🪑 المجموع: <b>{total} مكان فقط</b>\n\n"
-        f"📅 <b>التواريخ:</b>\n{lines}\n\n"
-        f"⏰ {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n"
-        f"⚡ <i>سارع بالحجز!</i>"
-    )
 
 async def _send_drop_alert(key: str, dates: dict[str, int], total: int, prev: int, drop: int):
     lines = "\n".join(f"  • {d} — <b>{s} مكان</b>" for d, s in sorted(dates.items()))
@@ -838,12 +842,12 @@ async def set_commands():
         BotCommand(command="start",           description="الرئيسية"),
         BotCommand(command="check",           description="فحص فوري"),
         BotCommand(command="stats",           description="الإحصائيات"),
+        BotCommand(command="reset",           description="إعادة تعيين إحصائيات مركز"),
         BotCommand(command="daily",           description="تقرير يومي فوري"),
         BotCommand(command="intervals",       description="عرض التواقيت"),
         BotCommand(command="interval",        description="تغيير توقيت مركز"),
         BotCommand(command="drops",           description="عرض حدود النقصان"),
         BotCommand(command="drop",            description="تغيير حد النقصان"),
-        BotCommand(command="cthreshold",      description="حد قسنطينة"),
         BotCommand(command="quiet",           description="الساعات الصامتة"),
         BotCommand(command="pause",           description="إيقاف مؤقت للإشعارات"),
         BotCommand(command="heartbeat",       description="نبض التأكيد"),
