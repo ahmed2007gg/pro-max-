@@ -44,14 +44,14 @@ last_checked: dict[str, float] = {k: 0.0 for k in CALENDAR_IDS}
 last_total: dict[str, int | None] = {k: None for k in CALENDAR_IDS}
 
 # ── ساعات صامتة (24h) ──
-quiet_start: int = 0   # 0 = معطل
+quiet_start: int = 0
 quiet_end:   int = 0
 
 # ── إيقاف مؤقت ──
-pause_until: float = 0.0   # timestamp، 0 = غير مفعّل
+pause_until: float = 0.0
 
 # ── Heartbeat ──
-heartbeat_interval: int = 0    # بالثواني، 0 = معطل
+heartbeat_interval: int = 0
 last_heartbeat: float   = 0.0
 
 # ── إحصائيات ──
@@ -59,7 +59,7 @@ stats: dict = {}
 
 # ── فشل الموقع ──
 consecutive_failures: dict[str, int] = {k: 0 for k in CALENDAR_IDS}
-FAILURE_ALERT_AFTER = 3   # عدد الفشل المتتالي قبل الإشعار
+FAILURE_ALERT_AFTER = 3
 
 NAMES = {
     "algiers":      "الجزائر العاصمة",
@@ -207,7 +207,6 @@ def get_months(ahead: int = 2) -> list[str]:
 
 
 async def _check_center(key: str) -> dict[str, int] | None:
-    """يرجع None لو فشل الاتصال"""
     cal_id = CALENDAR_IDS[key]
     all_dates: dict[str, int] = {}
     failed = True
@@ -263,7 +262,7 @@ def is_quiet_time() -> bool:
     now_h = datetime.now().hour
     if quiet_start < quiet_end:
         return quiet_start <= now_h < quiet_end
-    else:  # يتخطى منتصف الليل
+    else:
         return now_h >= quiet_start or now_h < quiet_end
 
 def is_paused() -> bool:
@@ -410,7 +409,6 @@ async def cmd_drop(msg: types.Message):
         await msg.answer(f"🔕 تم تعطيل إشعار النقصان لـ <b>{NAMES[key]}</b>", parse_mode="HTML")
     else:
         await msg.answer(f"📉 حد النقصان لـ <b>{NAMES[key]}</b>: {'معطل' if old==0 else f'{old}+'} ← <b>{value}+</b>", parse_mode="HTML")
-
 
 
 # ── ساعات صامتة ──
@@ -606,7 +604,6 @@ CHECKERS = {
     "oran_vip":     check_oran_vip,
 }
 
-# لتتبع آخر يوم أُرسل فيه التقرير اليومي
 last_daily_day: int = -1
 
 
@@ -700,7 +697,7 @@ async def monitor_loop():
                 dates = result
                 total = sum(dates.values())
                 prev  = last_total[key]
-                log.info(f"📊 {NAMES[key]}: {total} مكان ({len(dates)} تاريخ)")
+                log.info(f"📊 {NAMES[key]}: {total} مكان ({len(dates)} تاريخ) — prev={prev}")
 
                 _update_stats(key, total)
 
@@ -714,32 +711,39 @@ async def monitor_loop():
                             await _send_drop_alert(key, dates, total, prev, drop)
                             _update_stats(key, total, "drop")
 
-                # ── إشعار الارتفاع ──
-                if prev is not None and total > prev and prev > 0:
-                    rise = total - prev
-                    log.info(f"📈 {NAMES[key]}: ارتفع {rise} ({prev}→{total})")
-                    if not is_quiet_time() and not is_paused():
-                        await _send_rise_alert(key, dates, total, prev, rise)
-                        _update_stats(key, total, "rise")
+                if not is_quiet_time() and not is_paused():
+                    if dates:
+                        # ── أول فحص: أرسل إشعار عام ──
+                        if prev is None:
+                            log.info(f"🔔 {NAMES[key]}: أول فحص — إرسال إشعار عام")
+                            await _send_alert(key, dates)
+                            _update_stats(key, total, "alert")
 
-                # ── إشعار آخر مكان ──
-                if 0 < total <= 2:
-                    log.info(f"🚨 {NAMES[key]}: آخر {total} مكان!")
-                    if not is_quiet_time() and not is_paused():
-                        await _send_last_seats_alert(key, dates, total)
+                        # ── ارتفعت المواعيد ──
+                        elif total > prev:
+                            rise = total - prev
+                            log.info(f"📈 {NAMES[key]}: ارتفع {rise} ({prev}→{total})")
+                            await _send_rise_alert(key, dates, total, prev, rise)
+                            _update_stats(key, total, "rise")
 
-                last_total[key] = total
+                        # ── نفس العدد أو نقص (تم التعامل معه بـ drop_alert) ──
+                        else:
+                            log.info(f"➖ {NAMES[key]}: لا تغيير يستدعي إشعاراً ({prev}→{total})")
 
-                # ── منطق موحّد لجميع المراكز ──
-                if dates and not is_quiet_time() and not is_paused():
-                    await _send_alert(key, dates)
-                    _update_stats(key, total, "alert")
-                elif not dates:
-                    log.info(f"📭 {NAMES[key]}: لا مواعيد")
+                    else:
+                        log.info(f"📭 {NAMES[key]}: لا مواعيد")
+
                 elif is_quiet_time():
                     log.info(f"🌙 {NAMES[key]}: ساعة صامتة — تم تخطي الإشعار")
                 elif is_paused():
                     log.info(f"⏸ {NAMES[key]}: موقوف مؤقتاً — تم تخطي الإشعار")
+
+                # ── إشعار آخر مكان ──
+                if 0 < total <= 2 and not is_quiet_time() and not is_paused():
+                    log.info(f"🚨 {NAMES[key]}: آخر {total} مكان!")
+                    await _send_last_seats_alert(key, dates, total)
+
+                last_total[key] = total
 
             except Exception as e:
                 log.error(f"خطأ في فحص {key}: {e}")
@@ -759,9 +763,11 @@ async def _send_to_group(key: str, text: str):
         )
     ]])
     try:
+        log.info(f"🔔 إرسال إشعار → القروب {CHAT_ID} [{NAMES[key]}]")
         await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="HTML", reply_markup=kb)
+        log.info(f"✅ تم إرسال الإشعار بنجاح [{NAMES[key]}]")
     except Exception as e:
-        log.error(f"فشل إرسال الإشعار: {e}")
+        log.error(f"❌ فشل إرسال الإشعار [{NAMES[key]}]: {e}")
 
 
 async def _send_alert(key: str, dates: dict[str, int]):
