@@ -14,7 +14,7 @@ import aiohttp
 #  ⚙️  إعدادات
 # ─────────────────────────────────────────
 BOT_TOKEN  = os.getenv("BOT_TOKEN", "8688561478:AAGRQ2a2qujKiRVHlfWck_bBvEw3NxDHhe0")
-CHAT_ID    = os.getenv("CHAT_ID",   "-1003680423989")
+CHAT_ID    = os.getenv("CHAT_ID",   " -1003837495585)
 ADMIN_ID   = int(os.getenv("ADMIN_ID", "8499305437"))
 STATS_FILE = "stats.json"
 
