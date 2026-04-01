@@ -28,8 +28,8 @@ DROP_THRESHOLDS: dict[str, int] = {
 CHECK_INTERVALS: dict[str, int] = {
     "algiers":      60,
     "constantine":  60,
-    "oran":         3600,
-    "oran_vip":     3600,
+    "oran":         60,
+    "oran_vip":     60,
 }
 
 CALENDAR_IDS = {
